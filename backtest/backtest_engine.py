@@ -5,10 +5,11 @@ import contextlib
 from strategies.ma_crossover import generate_signal
 from core.atr import atr_stop
 from core.position_sizer import calculate_position_size
+from core.regime import detect_regime
+import config
 
-COMMISSION = 0.001   # 0.1% per trade
-SLIPPAGE   = 0.0005  # 0.05% per trade
-RISK_PCT   = 0.01    # 1% account risk per trade
+COMMISSION = 0.001
+SLIPPAGE   = 0.0005
 ATR_MULT   = 2.0
 
 @contextlib.contextmanager
@@ -23,6 +24,8 @@ def _apply_costs(price, side):
     return price + slip + comm if side == "BUY" else price - slip - comm
 
 def run_backtest(data, initial_cash=100000, symbol="???"):
+    is_volatile = symbol in config.VOLATILE_SYMBOLS
+    risk_pct    = config.RISK_PERCENT_VOLATILE if is_volatile else config.RISK_PERCENT_STEADY
     cash = initial_cash
     position = 0
     entry_price = 0
@@ -45,8 +48,13 @@ def run_backtest(data, initial_cash=100000, symbol="???"):
         try:
             with _silent():
                 signal = generate_signal(signal_data)
+                regime = detect_regime(signal_data)
         except Exception:
             continue
+
+        # Volatile slots blocked in sideways regime
+        if is_volatile and regime == "SIDEWAYS":
+            signal = "HOLD"
 
         if signal == "BUY" and position == 0:
             try:
@@ -54,7 +62,7 @@ def run_backtest(data, initial_cash=100000, symbol="???"):
                     stop, atr = atr_stop(signal_data, multiplier=ATR_MULT)
             except Exception:
                 stop = exec_price * 0.98
-            shares = calculate_position_size(portfolio_val, RISK_PCT, exec_price, stop)
+            shares = calculate_position_size(portfolio_val, risk_pct, exec_price, stop)
             cost = _apply_costs(exec_price, "BUY")
             total_cost = shares * cost
             if shares > 0 and total_cost <= cash:
