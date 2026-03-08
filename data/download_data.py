@@ -1,7 +1,9 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import yfinance as yf
-import os
+import config
 
-SYMBOLS = ["SPY", "QQQ", "AAPL", "NVDA", "MSFT"]
+SYMBOLS = config.SYMBOLS
 FOLDER = "data/history"
 
 os.makedirs(FOLDER, exist_ok=True)
