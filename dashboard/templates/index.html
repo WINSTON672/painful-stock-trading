@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d0d1a;
+  --card: #16213e;
+  --card2: #0f3460;
+  --accent: #e94560;
+  --green: #4caf50;
+  --red: #ef5350;
+  --teal: #26c6da;
+  --orange: #ffa726;
+  --purple: #ab47bc;
+  --blue: #42a5f5;
+  --text: #e0e0e0;
+  --muted: #888;
+  --border: #1e3a5f;
+}
+
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+/* ── Header ── */
+header {
+  background: var(--card);
+  border-bottom: 2px solid var(--border);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.logo { font-size: 1.25rem; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; }
+.logo span { color: var(--text); }
+.header-right { display: flex; align-items: center; gap: 12px; }
+#live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+#last-update { font-size: 0.75rem; color: var(--muted); }
+
+/* ── Buttons ── */
+.btn {
+  padding: 8px 16px; border: none; border-radius: 8px;
+  font-size: 0.85rem; font-weight: 700; cursor: pointer; transition: all 0.15s;
+}
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-accent:hover { background: #c73652; }
+.btn-accent:disabled { background: #555; cursor: not-allowed; }
+.btn-ghost { background: var(--card2); color: var(--text); }
+.btn-ghost:hover { background: #1a4a80; }
+
+/* ── Layout ── */
+.container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+@media (max-width: 900px) { .grid-4 { grid-template-columns: 1fr 1fr; } .grid-2 { grid-template-columns: 1fr; } }
+@media (max-width: 500px) { .grid-4 { grid-template-columns: 1fr; } }
+
+/* ── Cards ── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+.card-title {
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--muted); margin-bottom: 10px;
+}
+
+/* ── Stat cards ── */
+.stat-value { font-size: 1.8rem; font-weight: 700; line-height: 1; }
+.stat-sub { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+.neutral { color: var(--text); }
+
+/* ── Chart ── */
+#chart-wrapper {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  position: relative;
+}
+#equityChart { max-height: 280px; }
+.chart-loading { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 40px; }
+
+/* ── Signal cards ── */
+.signal-grid { display: flex; flex-direction: column; gap: 8px; }
+.signal-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card2); border-radius: 8px; padding: 10px 14px;
+}
+.signal-sym { font-weight: 700; font-size: 0.95rem; width: 52px; }
+.badge {
+  padding: 3px 10px; border-radius: 20px; font-size: 0.72rem;
+  font-weight: 700; letter-spacing: 0.5px;
+}
+.badge-buy    { background: rgba(76,175,80,.2);  color: var(--green); }
+.badge-sell   { background: rgba(239,83,80,.2);  color: var(--red); }
+.badge-hold   { background: rgba(136,136,136,.2);color: var(--muted); }
+.badge-trend  { background: rgba(38,198,218,.2); color: var(--teal); }
+.badge-side   { background: rgba(255,167,38,.2); color: var(--orange); }
+.badge-steady { background: rgba(66,165,245,.2); color: var(--blue); }
+.badge-vol    { background: rgba(171,71,188,.2); color: var(--purple); }
+.badge-blocked{ background: rgba(239,83,80,.1);  color: #f44336; font-style: italic; }
+.signal-blocked { opacity: 0.5; }
+
+/* ── Positions ── */
+.pos-list { display: flex; flex-direction: column; gap: 8px; }
+.pos-row {
+  background: var(--card2); border-radius: 8px; padding: 12px 14px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.pos-left { display: flex; flex-direction: column; gap: 2px; }
+.pos-sym { font-weight: 700; font-size: 1rem; }
+.pos-detail { font-size: 0.75rem; color: var(--muted); }
+.pos-right { text-align: right; }
+.pos-pnl { font-weight: 700; font-size: 1rem; }
+.pos-pct { font-size: 0.75rem; color: var(--muted); }
+.empty-msg { color: var(--muted); font-size: 0.85rem; padding: 20px 0; text-align: center; }
+
+/* ── Table ── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.8px;
+     border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+td { padding: 9px 10px; border-bottom: 1px solid #1a2a3a; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,0.03); }
+
+/* ── Modal ── */
+#modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7);
+  z-index: 200; align-items: center; justify-content: center;
+}
+#modal-overlay.open { display: flex; }
+#modal {
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  width: 680px; max-width: 95vw; max-height: 80vh;
+  display: flex; flex-direction: column;
+}
+#modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; }
+#modal-header h3 { font-size: 1rem; }
+#modal-close { background: none; border: none; color: var(--muted); font-size: 1.4rem; cursor: pointer; }
+#modal-close:hover { color: var(--text); }
+#modal-output {
+  flex: 1; overflow-y: auto; padding: 16px 20px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8rem;
+  line-height: 1.6; white-space: pre-wrap; color: #a5d6a7;
+  background: #0a0a14; border-radius: 0 0 12px 12px;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📈 <span>Trading</span>Dashboard</div>
+  <div class="header-right">
+    <div id="live-dot"></div>
+    <span id="last-update">Loading…</span>
+    <button class="btn btn-ghost" onclick="refreshAll()">⟳ Refresh</button>
+    <button class="btn btn-accent" id="run-btn" onclick="runBot()">▶ Run Bot Now</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Stat cards -->
+  <div class="grid-4">
+    <div class="card">
+      <div class="card-title">Account Equity</div>
+      <div class="stat-value neutral" id="stat-equity">—</div>
+      <div class="stat-sub" id="stat-equity-sub"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Buying Power</div>
+      <div class="stat-value neutral" id="stat-bp">—</div>
+      <div class="stat-sub" id="stat-bp-sub">Available cash</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Day P&L</div>
+      <div class="stat-value neutral" id="stat-pnl">—</div>
+      <div class="stat-sub" id="stat-pnl-sub"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Open Positions</div>
+      <div class="stat-value neutral" id="stat-pos">—</div>
+      <div class="stat-sub" id="stat-pos-sub">active trades</div>
+    </div>
+  </div>
+
+  <!-- Equity curve -->
+  <div id="chart-wrapper">
+    <div class="card-title">Equity Curve — Backtest (2018 → now)</div>
+    <div id="chart-loading" class="chart-loading">Loading chart…</div>
+    <canvas id="equityChart" style="display:none"></canvas>
+  </div>
+
+  <!-- Signals + Positions -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title">Signal Status</div>
+      <div class="signal-grid" id="signal-list"><div class="empty-msg">Loading…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Open Positions</div>
+      <div class="pos-list" id="pos-list"><div class="empty-msg">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- Trade journal -->
+  <div class="card">
+    <div class="card-title">Trade Journal — Recent Trades</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th><th>Signal</th><th>Symbol</th>
+            <th>Shares</th><th>Entry</th><th>Stop</th><th>ATR</th><th>Strategy</th>
+          </tr>
+        </thead>
+        <tbody id="trade-table"><tr><td colspan="8" style="color:var(--muted);text-align:center;padding:20px">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- Run bot modal -->
+<div id="modal-overlay">
+  <div id="modal">
+    <div id="modal-header">
+      <h3>Bot Output</h3>
+      <button id="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <pre id="modal-output">Running…</pre>
+  </div>
+</div>
+
+<script>
+let equityChart = null;
+
+// ── Fetch helpers ──────────────────────────────────────────────
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+function fmt(n, prefix='$') {
+  return prefix + Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+// ── Account ────────────────────────────────────────────────────
+async function loadAccount() {
+  const d = await fetchJSON('/api/account');
+  if (d.error) return;
+
+  document.getElementById('stat-equity').textContent = fmt(d.equity);
+  document.getElementById('stat-bp').textContent = fmt(d.buying_power);
+
+  const pnlEl  = document.getElementById('stat-pnl');
+  const pnlSub = document.getElementById('stat-pnl-sub');
+  const sign   = d.day_pnl >= 0 ? '+' : '';
+  pnlEl.textContent = sign + fmt(d.day_pnl);
+  pnlEl.className = 'stat-value ' + (d.day_pnl >= 0 ? 'pos' : 'neg');
+  pnlSub.textContent = sign + d.day_pnl_pct.toFixed(2) + '% today';
+}
+
+// ── Positions ──────────────────────────────────────────────────
+async function loadPositions() {
+  const positions = await fetchJSON('/api/positions');
+  const el = document.getElementById('pos-list');
+  const statEl = document.getElementById('stat-pos');
+
+  if (!Array.isArray(positions) || positions.length === 0) {
+    el.innerHTML = '<div class="empty-msg">No open positions</div>';
+    statEl.textContent = '0';
+    return;
+  }
+
+  statEl.textContent = positions.length;
+  el.innerHTML = positions.map(p => {
+    const cls = p.unrealized_pl >= 0 ? 'pos' : 'neg';
+    const sign = p.unrealized_pl >= 0 ? '+' : '';
+    const tier = p.tier === 'VOLATILE'
+      ? '<span class="badge badge-vol">VOLATILE</span>'
+      : '<span class="badge badge-steady">STEADY</span>';
+    return `
+      <div class="pos-row">
+        <div class="pos-left">
+          <div class="pos-sym">${p.symbol} ${tier}</div>
+          <div class="pos-detail">${p.qty} shares · entry $${p.entry_price} · now $${p.current_price}</div>
+        </div>
+        <div class="pos-right">
+          <div class="pos-pnl ${cls}">${sign}${fmt(p.unrealized_pl)}</div>
+          <div class="pos-pct">${sign}${p.unrealized_plpc}%</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── Signals ────────────────────────────────────────────────────
+async function loadSignals() {
+  const signals = await fetchJSON('/api/signals');
+  const el = document.getElementById('signal-list');
+
+  el.innerHTML = signals.map(s => {
+    const sigBadge = s.signal === 'BUY' ? 'badge-buy'
+                   : s.signal === 'SELL' ? 'badge-sell' : 'badge-hold';
+    const regBadge = s.regime === 'TREND' ? 'badge-trend' : 'badge-side';
+    const tierBadge = s.tier === 'VOLATILE' ? 'badge-vol' : 'badge-steady';
+    const blockedBadge = s.blocked ? '<span class="badge badge-blocked">BLOCKED</span>' : '';
+    const rowClass = s.blocked ? 'signal-row signal-blocked' : 'signal-row';
+    return `
+      <div class="${rowClass}">
+        <span class="signal-sym">${s.symbol}</span>
+        <span class="badge ${sigBadge}">${s.signal}</span>
+        <span class="badge ${regBadge}">${s.regime}</span>
+        <span class="badge ${tierBadge}">${s.tier}</span>
+        ${blockedBadge}
+      </div>`;
+  }).join('');
+}
+
+// ── Trades ────────────────────────────────────────────────────
+async function loadTrades() {
+  const trades = await fetchJSON('/api/trades');
+  const tbody = document.getElementById('trade-table');
+
+  if (!Array.isArray(trades) || trades.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted);text-align:center;padding:20px">No trades yet</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = trades.map(t => {
+    const cls = t.signal === 'BUY' ? 'badge-buy' : t.signal === 'SELL' ? 'badge-sell' : 'badge-hold';
+    return `<tr>
+      <td style="color:var(--muted)">${t.timestamp}</td>
+      <td><span class="badge ${cls}">${t.signal}</span></td>
+      <td><strong>${t.symbol}</strong></td>
+      <td>${t.shares}</td>
+      <td>$${Number(t.entry_price).toFixed(2)}</td>
+      <td>$${Number(t.stop_price).toFixed(2)}</td>
+      <td>${Number(t.atr).toFixed(3)}</td>
+      <td style="color:var(--muted)">${t.strategy}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Equity chart ───────────────────────────────────────────────
+async function loadChart() {
+  const d = await fetchJSON('/api/equity');
+  const loadingEl = document.getElementById('chart-loading');
+  const canvasEl  = document.getElementById('equityChart');
+
+  if (d.error || !d.dates) {
+    loadingEl.textContent = 'Chart unavailable: ' + (d.error || 'no data');
+    return;
+  }
+
+  loadingEl.style.display = 'none';
+  canvasEl.style.display = 'block';
+
+  if (equityChart) equityChart.destroy();
+
+  equityChart = new Chart(canvasEl, {
+    type: 'line',
+    data: {
+      labels: d.dates,
+      datasets: [
+        {
+          label: 'Strategy',
+          data: d.strategy,
+          borderColor: '#4fc3f7',
+          backgroundColor: 'rgba(79,195,247,0.08)',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: 'Buy & Hold SPY',
+          data: d.buy_hold,
+          borderColor: '#888',
+          borderWidth: 1.5,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#aaa', boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: '#16213e',
+          borderColor: '#0f3460',
+          borderWidth: 1,
+          titleColor: '#e0e0e0',
+          bodyColor: '#aaa',
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: $${ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0})}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#666', maxTicksLimit: 8, font: { size: 10 } },
+          grid: { color: '#1a2a3a' }
+        },
+        y: {
+          ticks: {
+            color: '#666', font: { size: 10 },
+            callback: v => '$' + (v/1000).toFixed(0) + 'k'
+          },
+          grid: { color: '#1a2a3a' }
+        }
+      }
+    }
+  });
+}
+
+// ── Run bot ────────────────────────────────────────────────────
+async function runBot() {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running…';
+
+  document.getElementById('modal-output').textContent = 'Running bot…\n';
+  document.getElementById('modal-overlay').classList.add('open');
+
+  const res = await fetch('/api/run', { method: 'POST' });
+  const d   = await res.json();
+
+  document.getElementById('modal-output').textContent = d.output || '(no output)';
+  btn.disabled = false;
+  btn.textContent = '▶ Run Bot Now';
+
+  // Refresh all data after bot run
+  refreshAll();
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+
+// ── Refresh ────────────────────────────────────────────────────
+async function refreshAll() {
+  document.getElementById('last-update').textContent = 'Refreshing…';
+  await Promise.all([loadAccount(), loadPositions(), loadSignals(), loadTrades()]);
+  const now = new Date().toLocaleTimeString();
+  document.getElementById('last-update').textContent = `Updated ${now}`;
+}
+
+// ── Init ───────────────────────────────────────────────────────
+refreshAll();
+loadChart();  // chart is slow (runs backtest) — load separately
+
+// Auto-refresh every 30s (skip chart — too slow)
+setInterval(refreshAll, 30_000);
+
+// Close modal on overlay click
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
+});
+</script>
+</body>
+</html>
