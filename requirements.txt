@@ -4,3 +4,4 @@ alpaca-py
 ta
 flask
 matplotlib
+anthropic

@@ -17,6 +17,7 @@ from data.market_data import load_local_data
 from strategies.ma_crossover import generate_signal
 from core.regime import detect_regime
 from core.logger import JOURNAL_FILE
+from core.news_sentiment import get_news_sentiment
 
 # Alpaca market data client (for intraday bars)
 from alpaca.data.historical import StockHistoricalDataClient
@@ -146,17 +147,32 @@ def api_signals():
             with _silent():
                 signal = generate_signal(data)
                 regime = detect_regime(data)
+            news = get_news_sentiment(symbol)
             results.append({
-                "symbol":  symbol,
-                "signal":  signal,
-                "regime":  regime,
-                "tier":    "VOLATILE" if symbol in config.VOLATILE_SYMBOLS else "STEADY",
-                "blocked": symbol in config.VOLATILE_SYMBOLS and regime == "SIDEWAYS",
+                "symbol":           symbol,
+                "signal":           signal,
+                "regime":           regime,
+                "tier":             "VOLATILE" if symbol in config.VOLATILE_SYMBOLS else "STEADY",
+                "blocked":          symbol in config.VOLATILE_SYMBOLS and regime == "SIDEWAYS",
+                "news_sentiment":   news["sentiment"],
+                "news_confidence":  news["confidence"],
+                "news_summary":     news["summary"],
             })
         except Exception as e:
             results.append({"symbol": symbol, "signal": "ERR", "regime": "ERR",
-                            "tier": "STEADY", "blocked": False})
+                            "tier": "STEADY", "blocked": False,
+                            "news_sentiment": "NEUTRAL", "news_confidence": 0, "news_summary": ""})
     return jsonify(results)
+
+
+@app.route("/api/news/<symbol>")
+def api_news(symbol):
+    """Full news headlines + sentiment for a symbol."""
+    try:
+        data = get_news_sentiment(symbol.upper(), force=False)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/equity")
 def api_equity():
@@ -281,6 +297,182 @@ def api_chart(symbol):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """AI trading assistant — uses Claude if ANTHROPIC_API_KEY is set, otherwise rule-based."""
+    try:
+        msg = (request.json or {}).get("message", "").strip()
+        if not msg:
+            return jsonify({"error": "No message"}), 400
+
+        # ── Build live context ────────────────────────────────────
+        try:
+            acct        = get_account()
+            equity      = float(acct.equity)
+            last_eq     = float(acct.last_equity)
+            day_pnl     = equity - last_eq
+            day_pct     = day_pnl / last_eq * 100 if last_eq else 0
+        except Exception:
+            equity = last_eq = day_pnl = day_pct = 0
+
+        try:
+            positions   = alpaca_client.get_all_positions()
+            pos_text    = ", ".join(
+                f"{p.symbol} ({p.qty} sh, ${float(p.unrealized_pl):+.0f})"
+                for p in positions
+            ) or "none"
+        except Exception:
+            pos_text    = "unavailable"
+
+        sig_lines = []
+        news_lines = []
+        for symbol in config.SYMBOLS:
+            try:
+                data = load_local_data(symbol)
+                with _silent():
+                    sig = generate_signal(data)
+                    reg = detect_regime(data)
+                sig_lines.append(f"{symbol}:{sig}/{reg}")
+            except Exception:
+                pass
+            try:
+                n = get_news_sentiment(symbol)
+                news_lines.append(f"{symbol}:{n['sentiment']}({n['confidence']:.0%}) {n['summary']}")
+            except Exception:
+                pass
+        sig_text  = "  ".join(sig_lines)  or "unavailable"
+        news_text = "\n".join(news_lines) or "unavailable"
+
+        system_ctx = f"""You are a concise AI trading assistant for AutoTrader Pro, a paper trading bot.
+
+Live portfolio:
+• Equity: ${equity:,.2f}  Day P&L: ${day_pnl:+,.2f} ({day_pct:+.2f}%)
+• Positions: {pos_text}
+• Signals (symbol:signal/regime): {sig_text}
+
+Strategy: EMA crossover (Fast>Slow + price>Trend + RSI<75 = BUY; opposite = SELL).
+Tiers: STEADY (SPY,QQQ,MSFT) 1% risk; VOLATILE (NVDA,AMD) 0.5% risk, blocked if sideways.
+Stops: 2×ATR below entry. Max daily loss: 2%. 6-hour cooldown between trades.
+
+AI news filter: if news sentiment strongly contradicts the technical signal (≥65% confidence), the trade is blocked.
+
+Current news sentiment:
+{news_text}
+
+Be concise (2-4 sentences max). Use plain language. No disclaimers."""
+
+        # ── Try Claude API ────────────────────────────────────────
+        api_key = getattr(config, "ANTHROPIC_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+        if api_key:
+            try:
+                import anthropic as _ant
+                _c = _ant.Anthropic(api_key=api_key)
+                resp = _c.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=300,
+                    system=system_ctx,
+                    messages=[{"role": "user", "content": msg}],
+                )
+                return jsonify({"response": resp.content[0].text})
+            except Exception:
+                pass
+
+        # ── Rule-based AI (free, no API needed) ──────────────────
+        m = msg.lower()
+
+        if any(w in m for w in ["portfolio", "doing", "today", "performance", "pnl", "p&l", "how am i"]):
+            word = "up" if day_pnl >= 0 else "down"
+            r = f"You're {word} ${abs(day_pnl):,.2f} ({day_pct:+.2f}%) today. Equity: ${equity:,.2f}. {f'Positions: {pos_text}.' if pos_text != 'none' else 'No open positions.'}"
+
+        elif any(w in m for w in ["news", "headline", "sentiment"]):
+            lines = []
+            for sym in config.SYMBOLS:
+                try:
+                    n = get_news_sentiment(sym)
+                    emoji = {"BULLISH":"📈","BEARISH":"📉","NEUTRAL":"➡"}.get(n["sentiment"],"➡")
+                    lines.append(f"{sym}: {emoji} {n['sentiment']} — {n['summary']}")
+                except Exception:
+                    pass
+            r = "Current news sentiment:\n" + "\n".join(lines) if lines else "Could not fetch news."
+
+        elif any(w in m for w in ["signal", "buy", "sell", "should i trade", "should i buy", "should i sell"]):
+            buys  = [s for s in sig_text.split("  ") if ":BUY"  in s]
+            sells = [s for s in sig_text.split("  ") if ":SELL" in s]
+            parts = []
+            if buys:  parts.append(f"BUY signals: {', '.join(b.split(':')[0] for b in buys)}")
+            if sells: parts.append(f"SELL signals: {', '.join(s.split(':')[0] for s in sells)}")
+            if not parts: parts = ["All HOLD — no action right now"]
+            r = ". ".join(parts) + ". Bot runs every 5 min, or hit Run Now."
+
+        elif any(w in m for w in ["strategy", "how does", "explain", "work", "ema", "fast", "slow", "trend"]):
+            r = ("Strategy: BUY when the Fast line (EMA20) crosses above the Slow line (EMA50) "
+                 "AND price is above the Trend line (MA200) AND RSI < 75. "
+                 "SELL on the reverse. Volatile stocks (NVDA, AMD) are blocked when the market is sideways. "
+                 "News sentiment can also block trades if strongly against the signal.")
+
+        elif any(w in m for w in ["risk", "stop", "loss", "drawdown", "safe"]):
+            r = ("Each trade risks at most 1% (SPY/QQQ/MSFT) or 0.5% (NVDA/AMD) of your account. "
+                 f"That's about ${equity * 0.01:,.0f} per steady trade right now. "
+                 "Stop loss is set at 2× ATR below entry. Bot halts all trading if you're down 2% in a day.")
+
+        elif any(w in m for w in ["position", "holding", "open", "what do i own"]):
+            r = f"Open positions: {pos_text}." if pos_text != "none" else "No open positions right now."
+
+        elif any(w in m for w in ["equity", "balance", "money", "worth", "account"]):
+            bp = float(get_account().buying_power)
+            r = f"Account equity: ${equity:,.2f}. Buying power: ${bp:,.2f}. Day P&L: ${day_pnl:+,.2f} ({day_pct:+.2f}%)."
+
+        elif any(w in m for w in ["nvda", "amd", "spy", "qqq", "msft"]):
+            sym = next((s for s in ["NVDA","AMD","SPY","QQQ","MSFT"] if s.lower() in m), None)
+            if sym:
+                sig_info = next((s for s in sig_text.split("  ") if s.startswith(sym+":")), "no data")
+                try:
+                    n = get_news_sentiment(sym)
+                    emoji = {"BULLISH":"📈","BEARISH":"📉","NEUTRAL":"➡"}.get(n["sentiment"],"➡")
+                    news_bit = f" News: {emoji} {n['sentiment']} ({n['confidence']:.0%}) — {n['summary']}"
+                except Exception:
+                    news_bit = ""
+                r = f"{sym} — Signal: {sig_info}.{news_bit}"
+            else:
+                r = f"Signals: {sig_text}"
+
+        elif any(w in m for w in ["bot", "running", "when", "next", "run"]):
+            r = "The bot runs automatically every 5 minutes. Hit ⚡ Run Now in the top bar to trigger it immediately. Check the Bot Log tab to see what it's doing."
+
+        else:
+            # Generic summary
+            word = "up" if day_pnl >= 0 else "down"
+            buys = sig_text.count(":BUY")
+            r = (f"Portfolio {word} ${abs(day_pnl):,.2f} today. Equity ${equity:,.2f}. "
+                 f"{buys} BUY signal{'s' if buys!=1 else ''} active. "
+                 f"Try asking: 'How are my signals?', 'What's the news?', 'Explain the strategy'")
+
+        return jsonify({"response": r})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/quotes")
+def api_quotes():
+    """Last price + day change for all symbols from local CSV data."""
+    result = {}
+    for symbol in config.SYMBOLS:
+        try:
+            data = load_local_data(symbol)
+            last = float(data["Close"].iloc[-1])
+            prev = float(data["Close"].iloc[-2])
+            chg  = last - prev
+            result[symbol] = {
+                "price":      round(last, 2),
+                "change":     round(chg, 2),
+                "change_pct": round(chg / prev * 100, 2),
+            }
+        except Exception:
+            result[symbol] = {"price": 0, "change": 0, "change_pct": 0}
+    return jsonify(result)
 
 
 @app.route("/api/balance/history")

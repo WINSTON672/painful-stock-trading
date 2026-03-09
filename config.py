@@ -1,5 +1,6 @@
-API_KEY = "PKOIFRVYXIML6HYMLPPICZK2Y3"
-SECRET_KEY = "7EdnMz9MvjLZvyTdu8gygr22qyPYHG75cy8QhtrJczsz"
+API_KEY = ""
+ANTHROPIC_API_KEY = ""
+SECRET_KEY = ""
 BASE_URL = "https://paper-api.alpaca.markets"
 
 # ── Portfolio tiers ─────────────────────────────────────────────
