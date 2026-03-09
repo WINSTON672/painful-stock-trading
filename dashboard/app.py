@@ -8,7 +8,8 @@ import threading
 import contextlib
 import io
 from collections import deque
-from flask import Flask, render_template, jsonify, Response
+from datetime import datetime, timedelta, timezone
+from flask import Flask, render_template, jsonify, Response, request
 
 import config
 from execution.paper_executor import get_account, client as alpaca_client
@@ -16,6 +17,13 @@ from data.market_data import load_local_data
 from strategies.ma_crossover import generate_signal
 from core.regime import detect_regime
 from core.logger import JOURNAL_FILE
+
+# Alpaca market data client (for intraday bars)
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+_data_client = StockHistoricalDataClient(config.API_KEY, config.SECRET_KEY)
 
 app = Flask(__name__)
 
@@ -194,6 +202,107 @@ def api_log_stream():
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+@app.route("/api/chart/<symbol>")
+def api_chart(symbol):
+    period = request.args.get("period", "1Y")
+    symbol = symbol.upper()
+
+    try:
+        if period in ("1Y", "3M", "1M"):
+            # Use local CSV (daily bars)
+            data = load_local_data(symbol)
+            cutoff = {
+                "1Y": datetime.now() - timedelta(days=365),
+                "3M": datetime.now() - timedelta(days=90),
+                "1M": datetime.now() - timedelta(days=30),
+            }[period]
+            data = data[data.index >= cutoff]
+
+            candles = []
+            for ts, row in data.iterrows():
+                candles.append({
+                    "time":   int(ts.replace(tzinfo=timezone.utc).timestamp()),
+                    "open":   round(float(row["Open"]),  4),
+                    "high":   round(float(row["High"]),  4),
+                    "low":    round(float(row["Low"]),   4),
+                    "close":  round(float(row["Close"]), 4),
+                    "volume": int(float(row["Volume"])),
+                })
+
+            # EMA / MA overlays
+            import pandas as pd
+            import ta
+            close = data["Close"].astype(float)
+            ema20  = close.ewm(span=20).mean()
+            ema50  = close.ewm(span=50).mean()
+            ma200  = close.rolling(200).mean()
+            rsi14  = ta.momentum.RSIIndicator(close, window=14).rsi()
+
+            def to_line(series):
+                return [{"time": int(ts.replace(tzinfo=timezone.utc).timestamp()),
+                          "value": round(float(v), 4)}
+                        for ts, v in series.items() if not (v != v)]  # skip NaN
+
+            return jsonify({
+                "candles": candles,
+                "ema20":   to_line(ema20),
+                "ema50":   to_line(ema50),
+                "ma200":   to_line(ma200),
+                "rsi":     to_line(rsi14),
+            })
+
+        else:
+            # Intraday — fetch from Alpaca
+            tf_map = {
+                "5min": (TimeFrame(5,  TimeFrameUnit.Minute), timedelta(days=5)),
+                "1min": (TimeFrame(1,  TimeFrameUnit.Minute), timedelta(days=2)),
+                "1sec": (TimeFrame(1,  TimeFrameUnit.Minute), timedelta(hours=6)),
+            }
+            tf, lookback = tf_map.get(period, tf_map["5min"])
+            start = datetime.now(timezone.utc) - lookback
+
+            req  = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start)
+            bars = _data_client.get_stock_bars(req)[symbol]
+
+            candles = [{"time":   int(b.timestamp.replace(tzinfo=timezone.utc).timestamp()),
+                        "open":   round(float(b.open),   4),
+                        "high":   round(float(b.high),   4),
+                        "low":    round(float(b.low),    4),
+                        "close":  round(float(b.close),  4),
+                        "volume": int(b.volume)} for b in bars]
+
+            # Latest quote for real-time last price
+            quote = _data_client.get_stock_latest_quote(
+                StockLatestQuoteRequest(symbol_or_symbols=symbol))[symbol]
+            last_price = round((float(quote.ask_price) + float(quote.bid_price)) / 2, 4)
+
+            return jsonify({"candles": candles, "last_price": last_price})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/balance/history")
+def api_balance_history():
+    """Account equity history from Alpaca portfolio history API."""
+    try:
+        period = request.args.get("period", "1M")
+        alpaca_period = {"1Y": "1A", "3M": "3M", "1M": "1M",
+                         "5min": "1D", "1min": "1D", "1sec": "1D"}.get(period, "1M")
+
+        history = alpaca_client.get_portfolio_history(period=alpaca_period, timeframe="1D")
+        points = []
+        for ts, val in zip(history.timestamp, history.equity):
+            if val is not None and val > 0:
+                points.append({
+                    "time":  int(ts),
+                    "value": round(float(val), 2),
+                })
+        return jsonify(points)
+    except Exception as e:
+        return jsonify({"error": str(e), "points": []}), 200
+
 
 if __name__ == "__main__":
     start_bot_loop()

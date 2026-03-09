@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -51,8 +51,40 @@ header {
 .pos{color:var(--green);} .neg{color:var(--red);} .neutral{color:var(--text);}
 
 /* Chart */
-#chart-wrapper { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; }
-#equityChart { max-height:280px; }
+#chart-wrapper { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-bottom:20px; }
+#chart-toolbar {
+  display:flex; align-items:center; gap:8px; padding:12px 16px;
+  border-bottom:1px solid var(--border); flex-wrap:wrap;
+}
+#chart-symbol-select {
+  background:var(--card2); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; padding:4px 10px; font-size:.85rem; font-weight:700; cursor:pointer;
+}
+.period-btns { display:flex; gap:4px; }
+.period-btn {
+  padding:4px 10px; border:1px solid var(--border); border-radius:6px;
+  background:transparent; color:var(--muted); font-size:.78rem; font-weight:700;
+  cursor:pointer; transition:all .15s;
+}
+.period-btn:hover { background:var(--card2); color:var(--text); }
+.period-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.chart-toggles { display:flex; gap:6px; margin-left:auto; }
+.toggle-btn {
+  padding:4px 10px; border-radius:6px; font-size:.72rem; font-weight:700;
+  cursor:pointer; border:1px solid; transition:all .15s;
+}
+#chart-price    { width:100%; }
+#chart-balance  { width:100%; border-top:1px solid var(--border); }
+#chart-loading  { color:var(--muted); font-size:.9rem; text-align:center; padding:40px; }
+#annot-bar {
+  display:flex; align-items:center; gap:8px; padding:8px 16px;
+  border-top:1px solid var(--border); background:#0a0f1e; font-size:.75rem;
+}
+#annot-bar input {
+  flex:1; background:var(--card2); border:1px solid var(--border); border-radius:6px;
+  color:var(--text); padding:4px 10px; font-size:.78rem;
+}
+#annot-bar input::placeholder { color:var(--muted); }
 .chart-loading { color:var(--muted); font-size:.9rem; text-align:center; padding:40px; }
 
 /* Signal cards */
@@ -79,31 +111,31 @@ header {
   display:none;
   position:fixed;
   z-index:999;
-  width:300px;
+  width:260px;
   background:#0d1b2e;
   border:1px solid var(--border);
   border-radius:10px;
-  padding:14px 16px;
+  padding:10px 13px;
   box-shadow:0 8px 32px rgba(0,0,0,.6);
-  font-size:.78rem;
-  line-height:1.6;
+  font-size:.74rem;
+  line-height:1.5;
   pointer-events:none;
 }
 #strat-tooltip h4 {
-  font-size:.8rem; font-weight:700; color:var(--accent);
-  margin-bottom:8px; letter-spacing:.5px;
+  font-size:.76rem; font-weight:700; color:var(--accent);
+  margin-bottom:6px; letter-spacing:.5px;
 }
-#strat-tooltip .tt-section { margin-bottom:10px; }
+#strat-tooltip .tt-section { margin-bottom:7px; }
 #strat-tooltip .tt-label {
-  font-size:.65rem; font-weight:700; text-transform:uppercase;
-  letter-spacing:.8px; color:var(--muted); margin-bottom:3px;
+  font-size:.62rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.8px; color:var(--muted); margin-bottom:2px;
 }
-#strat-tooltip .tt-row { display:flex; gap:6px; align-items:baseline; margin:2px 0; }
+#strat-tooltip .tt-row { display:flex; gap:5px; align-items:baseline; margin:1px 0; }
 #strat-tooltip .tt-badge {
-  padding:1px 7px; border-radius:10px; font-size:.65rem; font-weight:700;
+  padding:1px 6px; border-radius:10px; font-size:.62rem; font-weight:700;
   white-space:nowrap; flex-shrink:0;
 }
-#strat-tooltip .tt-desc { color:#ccc; }
+#strat-tooltip .tt-desc { color:#bbb; }
 
 /* Positions */
 .pos-list { display:flex; flex-direction:column; gap:8px; }
@@ -187,11 +219,38 @@ tr:hover td { background:rgba(255,255,255,.03); }
   </div>
   <div style="margin-bottom:20px"></div>
 
-  <!-- Equity curve -->
+  <!-- Main chart -->
   <div id="chart-wrapper">
-    <div class="card-title">Equity Curve — Backtest (2018 → now)</div>
+    <div id="chart-toolbar">
+      <select id="chart-symbol-select">
+        <option>SPY</option><option>QQQ</option><option>MSFT</option>
+        <option>NVDA</option><option>AMD</option>
+      </select>
+      <div class="period-btns">
+        <button class="period-btn active" data-p="1Y">1Y</button>
+        <button class="period-btn" data-p="3M">3M</button>
+        <button class="period-btn" data-p="1M">1M</button>
+        <button class="period-btn" data-p="5min">5m</button>
+        <button class="period-btn" data-p="1min">1m</button>
+        <button class="period-btn" data-p="1sec">live</button>
+      </div>
+      <div class="chart-toggles">
+        <button class="toggle-btn" id="tog-ema20"  style="border-color:#4fc3f7;color:#4fc3f7;background:rgba(79,195,247,.15)" onclick="toggleLine('ema20')">EMA20</button>
+        <button class="toggle-btn" id="tog-ema50"  style="border-color:#ffcc80;color:#ffcc80;background:rgba(255,204,128,.15)" onclick="toggleLine('ema50')">EMA50</button>
+        <button class="toggle-btn" id="tog-ma200"  style="border-color:#ce93d8;color:#ce93d8;background:rgba(206,147,216,.15)" onclick="toggleLine('ma200')">MA200</button>
+        <button class="toggle-btn" id="tog-bal"    style="border-color:#a5d6a7;color:#a5d6a7;background:rgba(165,214,167,.15)" onclick="toggleBalance()">Balance</button>
+      </div>
+      <span id="chart-last-price" style="margin-left:8px;font-weight:700;font-size:.95rem;color:var(--text)"></span>
+      <span id="chart-status" style="font-size:.72rem;color:var(--muted)"></span>
+    </div>
     <div id="chart-loading" class="chart-loading">Loading chart…</div>
-    <canvas id="equityChart" style="display:none"></canvas>
+    <div id="chart-price" style="height:320px;display:none"></div>
+    <div id="chart-balance" style="height:120px;display:none"></div>
+    <div id="annot-bar">
+      <span style="color:var(--muted)">📌 Annotation:</span>
+      <input id="annot-input" placeholder="Type note then click chart to pin it… (Esc to cancel)">
+      <button class="btn btn-ghost" style="padding:4px 12px;font-size:.75rem" onclick="clearAnnotations()">Clear all</button>
+    </div>
   </div>
 
   <!-- Strategy tooltip (hidden, shown on badge hover) -->
@@ -374,42 +433,195 @@ async function loadTrades() {
   }).join('');
 }
 
-// ── Equity chart ───────────────────────────────────────────────
-async function loadChart() {
-  const d = await fetch('/api/equity').then(r=>r.json()).catch(()=>({}));
-  const loadEl = document.getElementById('chart-loading');
-  const canvasEl = document.getElementById('equityChart');
-  if (d.error || !d.dates) { loadEl.textContent = 'Chart unavailable'; return; }
-  loadEl.style.display = 'none';
-  canvasEl.style.display = 'block';
-  if (equityChart) equityChart.destroy();
-  equityChart = new Chart(canvasEl, {
-    type:'line',
-    data: {
-      labels: d.dates,
-      datasets: [
-        { label:'Strategy', data:d.strategy, borderColor:'#4fc3f7',
-          backgroundColor:'rgba(79,195,247,.08)', borderWidth:2, pointRadius:0, fill:true, tension:.3 },
-        { label:'Buy & Hold SPY', data:d.buy_hold, borderColor:'#555',
-          borderWidth:1.5, borderDash:[4,4], pointRadius:0, fill:false, tension:.3 }
-      ]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:true,
-      interaction:{mode:'index',intersect:false},
-      plugins: {
-        legend:{labels:{color:'#aaa',boxWidth:12,font:{size:11}}},
-        tooltip:{backgroundColor:'#16213e',borderColor:'#0f3460',borderWidth:1,
-          titleColor:'#e0e0e0',bodyColor:'#aaa',
-          callbacks:{label:c=>` ${c.dataset.label}: $${c.parsed.y.toLocaleString('en-US',{maximumFractionDigits:0})}`}}
-      },
-      scales:{
-        x:{ticks:{color:'#666',maxTicksLimit:8,font:{size:10}},grid:{color:'#1a2a3a'}},
-        y:{ticks:{color:'#666',font:{size:10},callback:v=>'$'+(v/1000).toFixed(0)+'k'},grid:{color:'#1a2a3a'}}
-      }
-    }
+// ── Lightweight Charts ─────────────────────────────────────────
+let priceChart = null, priceSeries = null;
+let ema20Series = null, ema50Series = null, ma200Series = null;
+let balChart = null, balSeries = null;
+let chartAutoRefresh = null;
+let currentPeriod = '1Y';
+let currentSymbol = 'SPY';
+let lineVisible = { ema20: true, ema50: true, ma200: true };
+let balVisible = true;
+let annotations = JSON.parse(localStorage.getItem('chart_annotations') || '[]');
+let pendingAnnotation = false;
+
+const CHART_BG   = '#0d0d1a';
+const CHART_GRID = '#1a2a3a';
+const CHART_TEXT = '#888';
+
+function buildPriceChart() {
+  const el = document.getElementById('chart-price');
+  el.innerHTML = '';
+  priceChart = LightweightCharts.createChart(el, {
+    layout: { background: { color: CHART_BG }, textColor: CHART_TEXT },
+    grid: { vertLines: { color: CHART_GRID }, horzLines: { color: CHART_GRID } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: CHART_GRID },
+    timeScale: { borderColor: CHART_GRID, timeVisible: true, secondsVisible: false },
+    width: el.clientWidth,
+    height: 320,
   });
+
+  priceSeries = priceChart.addCandlestickSeries({
+    upColor: '#26a69a', downColor: '#ef5350',
+    borderUpColor: '#26a69a', borderDownColor: '#ef5350',
+    wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+  });
+
+  ema20Series = priceChart.addLineSeries({ color:'#4fc3f7', lineWidth:1.5, priceLineVisible:false, lastValueVisible:false });
+  ema50Series = priceChart.addLineSeries({ color:'#ffcc80', lineWidth:1.5, priceLineVisible:false, lastValueVisible:false });
+  ma200Series = priceChart.addLineSeries({ color:'#ce93d8', lineWidth:2,   priceLineVisible:false, lastValueVisible:false });
+
+  // Click to place annotation
+  priceChart.subscribeClick(param => {
+    const text = document.getElementById('annot-input').value.trim();
+    if (!text || !param.time) return;
+    const price = priceSeries.coordinateToPrice(param.point.y);
+    addAnnotation(param.time, price, text);
+    document.getElementById('annot-input').value = '';
+  });
+
+  // Resize observer
+  new ResizeObserver(() => {
+    priceChart.applyOptions({ width: el.clientWidth });
+  }).observe(el);
 }
+
+function buildBalChart() {
+  const el = document.getElementById('chart-balance');
+  el.innerHTML = '';
+  balChart = LightweightCharts.createChart(el, {
+    layout: { background: { color: '#0a0d15' }, textColor: CHART_TEXT },
+    grid: { vertLines: { color: CHART_GRID }, horzLines: { color: CHART_GRID } },
+    rightPriceScale: { borderColor: CHART_GRID },
+    timeScale: { borderColor: CHART_GRID, timeVisible: true },
+    width: el.clientWidth,
+    height: 120,
+  });
+  balSeries = balChart.addAreaSeries({
+    lineColor: '#a5d6a7', topColor: 'rgba(165,214,167,.25)',
+    bottomColor: 'rgba(165,214,167,.02)', lineWidth: 2,
+  });
+  new ResizeObserver(() => { balChart.applyOptions({ width: el.clientWidth }); }).observe(el);
+}
+
+function addAnnotation(time, price, text) {
+  const ann = { time, price, text };
+  annotations.push(ann);
+  localStorage.setItem('chart_annotations', JSON.stringify(annotations));
+  renderAnnotationMarkers();
+}
+
+function clearAnnotations() {
+  annotations = [];
+  localStorage.removeItem('chart_annotations');
+  renderAnnotationMarkers();
+}
+
+function renderAnnotationMarkers() {
+  if (!priceSeries) return;
+  const markers = annotations.map(a => ({
+    time: a.time,
+    position: 'aboveBar',
+    color: '#e94560',
+    shape: 'arrowDown',
+    text: a.text,
+  }));
+  priceSeries.setMarkers(markers);
+}
+
+function toggleLine(name) {
+  lineVisible[name] = !lineVisible[name];
+  const map = { ema20: ema20Series, ema50: ema50Series, ma200: ma200Series };
+  const op = lineVisible[name] ? 1 : 0;
+  map[name].applyOptions({ visible: lineVisible[name] });
+  document.getElementById('tog-' + name).style.opacity = op === 1 ? '1' : '0.35';
+}
+
+function toggleBalance() {
+  balVisible = !balVisible;
+  document.getElementById('chart-balance').style.display = balVisible ? 'block' : 'none';
+  document.getElementById('tog-bal').style.opacity = balVisible ? '1' : '0.35';
+  if (balVisible && balSeries && (!balSeries.data || balSeries.data().length === 0)) {
+    loadBalanceData();
+  }
+}
+
+async function loadBalanceData() {
+  try {
+    const d = await fetch(`/api/balance/history?period=${currentPeriod}`).then(r=>r.json());
+    if (Array.isArray(d) && d.length > 0) {
+      balSeries.setData(d);
+    }
+  } catch(e) {}
+}
+
+const REFRESH_INTERVALS = { '1Y':0, '3M':0, '1M':0, '5min':30000, '1min':15000, '1sec':2000 };
+
+async function loadChart(symbol, period) {
+  currentSymbol = symbol;
+  currentPeriod = period;
+
+  if (chartAutoRefresh) { clearInterval(chartAutoRefresh); chartAutoRefresh = null; }
+
+  document.getElementById('chart-loading').style.display = 'block';
+  document.getElementById('chart-price').style.display = 'none';
+  document.getElementById('chart-status').textContent = 'Loading…';
+
+  const d = await fetch(`/api/chart/${symbol}?period=${period}`).then(r=>r.json()).catch(e=>({error:e}));
+  document.getElementById('chart-loading').style.display = 'none';
+
+  if (d.error) { document.getElementById('chart-status').textContent = '⚠ ' + d.error; return; }
+
+  document.getElementById('chart-price').style.display = 'block';
+  if (!priceChart) buildPriceChart();
+  if (!balChart)   buildBalChart();
+
+  // Candles
+  const candles = (d.candles || []).filter(c => c.open && c.high && c.low && c.close);
+  priceSeries.setData(candles);
+
+  // Indicators (only for daily periods)
+  if (d.ema20) ema20Series.setData(d.ema20);
+  if (d.ema50) ema50Series.setData(d.ema50);
+  if (d.ma200) ma200Series.setData(d.ma200);
+
+  // Last price
+  if (d.last_price) {
+    document.getElementById('chart-last-price').textContent = '$' + d.last_price.toLocaleString();
+  } else if (candles.length) {
+    const last = candles[candles.length-1];
+    document.getElementById('chart-last-price').textContent = '$' + last.close.toLocaleString();
+  }
+
+  renderAnnotationMarkers();
+  priceChart.timeScale().fitContent();
+
+  // Balance pane
+  if (balVisible) loadBalanceData();
+
+  // Auto-refresh for intraday
+  const interval = REFRESH_INTERVALS[period];
+  document.getElementById('chart-status').textContent = interval ? `Auto-refresh ${interval/1000}s` : '';
+  if (interval) {
+    chartAutoRefresh = setInterval(() => loadChart(currentSymbol, currentPeriod), interval);
+  }
+}
+
+// Period button wiring
+document.querySelectorAll('.period-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadChart(document.getElementById('chart-symbol-select').value, btn.dataset.p);
+  });
+});
+document.getElementById('chart-symbol-select').addEventListener('change', e => {
+  loadChart(e.target.value, currentPeriod);
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('annot-input').value = '';
+});
 
 // ── Live log SSE ───────────────────────────────────────────────
 function addLogLine(text) {
@@ -474,15 +686,18 @@ let tooltipTimeout = null;
 
 function showTooltip(e) {
   clearTimeout(tooltipTimeout);
-  const pad = 14;
-  const tw = 300, th = 260;
+  tooltip.style.display = 'block';
+  const pad = 12;
+  const tw = tooltip.offsetWidth;
+  const th = tooltip.offsetHeight;
   let x = e.clientX + pad;
   let y = e.clientY + pad;
-  if (x + tw > window.innerWidth)  x = e.clientX - tw - pad;
-  if (y + th > window.innerHeight) y = e.clientY - th - pad;
+  if (x + tw > window.innerWidth  - pad) x = e.clientX - tw - pad;
+  if (y + th > window.innerHeight - pad) y = e.clientY - th - pad;
+  if (x < pad) x = pad;
+  if (y < pad) y = pad;
   tooltip.style.left = x + 'px';
   tooltip.style.top  = y + 'px';
-  tooltip.style.display = 'block';
 }
 
 function hideTooltip() {
@@ -504,7 +719,7 @@ function bindTooltips() {
 
 // ── Init ───────────────────────────────────────────────────────
 refreshAll();
-loadChart();
+loadChart('SPY', '1Y');
 connectSSE();
 bindTooltips();
 setInterval(refreshAll, 30_000);
