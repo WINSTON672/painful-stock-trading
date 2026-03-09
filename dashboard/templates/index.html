@@ -57,9 +57,13 @@ header {
 
 /* Signal cards */
 .signal-grid { display:flex; flex-direction:column; gap:8px; }
-.signal-row { display:flex; align-items:center; gap:10px; background:var(--card2); border-radius:8px; padding:10px 14px; }
+.signal-row {
+  display:flex; align-items:center; gap:10px;
+  background:var(--card2); border-radius:8px; padding:10px 14px;
+  position:relative; cursor:default;
+}
 .signal-sym { font-weight:700; font-size:.95rem; width:52px; }
-.badge { padding:3px 10px; border-radius:20px; font-size:.72rem; font-weight:700; letter-spacing:.5px; }
+.badge { padding:3px 10px; border-radius:20px; font-size:.72rem; font-weight:700; letter-spacing:.5px; cursor:help; }
 .badge-buy   { background:rgba(76,175,80,.2);  color:var(--green); }
 .badge-sell  { background:rgba(239,83,80,.2);  color:var(--red); }
 .badge-hold  { background:rgba(136,136,136,.2);color:var(--muted); }
@@ -69,6 +73,37 @@ header {
 .badge-vol   { background:rgba(171,71,188,.2); color:var(--purple); }
 .badge-blocked{background:rgba(239,83,80,.1);  color:#f44336; font-style:italic; }
 .signal-blocked { opacity:.5; }
+
+/* Strategy tooltip */
+#strat-tooltip {
+  display:none;
+  position:fixed;
+  z-index:999;
+  width:300px;
+  background:#0d1b2e;
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px 16px;
+  box-shadow:0 8px 32px rgba(0,0,0,.6);
+  font-size:.78rem;
+  line-height:1.6;
+  pointer-events:none;
+}
+#strat-tooltip h4 {
+  font-size:.8rem; font-weight:700; color:var(--accent);
+  margin-bottom:8px; letter-spacing:.5px;
+}
+#strat-tooltip .tt-section { margin-bottom:10px; }
+#strat-tooltip .tt-label {
+  font-size:.65rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.8px; color:var(--muted); margin-bottom:3px;
+}
+#strat-tooltip .tt-row { display:flex; gap:6px; align-items:baseline; margin:2px 0; }
+#strat-tooltip .tt-badge {
+  padding:1px 7px; border-radius:10px; font-size:.65rem; font-weight:700;
+  white-space:nowrap; flex-shrink:0;
+}
+#strat-tooltip .tt-desc { color:#ccc; }
 
 /* Positions */
 .pos-list { display:flex; flex-direction:column; gap:8px; }
@@ -159,10 +194,58 @@ tr:hover td { background:rgba(255,255,255,.03); }
     <canvas id="equityChart" style="display:none"></canvas>
   </div>
 
+  <!-- Strategy tooltip (hidden, shown on badge hover) -->
+  <div id="strat-tooltip">
+    <h4>⚙ Strategy: EMA Regime</h4>
+    <div class="tt-section">
+      <div class="tt-label">Signal Rules</div>
+      <div class="tt-row">
+        <span class="tt-badge" style="background:rgba(76,175,80,.2);color:#4caf50">BUY</span>
+        <span class="tt-desc">EMA20 &gt; EMA50 · price &gt; MA200 · RSI &lt; 75</span>
+      </div>
+      <div class="tt-row">
+        <span class="tt-badge" style="background:rgba(239,83,80,.2);color:#ef5350">SELL</span>
+        <span class="tt-desc">EMA20 &lt; EMA50 · price &lt; MA200 · RSI &gt; 25</span>
+      </div>
+      <div class="tt-row">
+        <span class="tt-badge" style="background:rgba(136,136,136,.2);color:#888">HOLD</span>
+        <span class="tt-desc">Conditions not met — no trade placed</span>
+      </div>
+    </div>
+    <div class="tt-section">
+      <div class="tt-label">Regime Filter</div>
+      <div class="tt-row">
+        <span class="tt-badge" style="background:rgba(38,198,218,.2);color:#26c6da">TREND</span>
+        <span class="tt-desc">MA200 slope rising over 20 days — all signals active</span>
+      </div>
+      <div class="tt-row">
+        <span class="tt-badge" style="background:rgba(255,167,38,.2);color:#ffa726">SIDEWAYS</span>
+        <span class="tt-desc">MA200 flat / falling — volatile slots blocked</span>
+      </div>
+    </div>
+    <div class="tt-section">
+      <div class="tt-label">Portfolio Tiers</div>
+      <div class="tt-row">
+        <span class="tt-badge" style="background:rgba(66,165,245,.2);color:#42a5f5">STEADY</span>
+        <span class="tt-desc">SPY · QQQ · MSFT — 1% account risk per trade</span>
+      </div>
+      <div class="tt-row">
+        <span class="tt-badge" style="background:rgba(171,71,188,.2);color:#ab47bc">VOLATILE</span>
+        <span class="tt-desc">NVDA · AMD — 0.5% risk, blocked in sideways regime</span>
+      </div>
+    </div>
+    <div class="tt-section" style="margin-bottom:0">
+      <div class="tt-label">Stop Loss</div>
+      <div class="tt-row">
+        <span class="tt-desc" style="color:#aaa">ATR × 2 below entry · position sized so max loss = risk %</span>
+      </div>
+    </div>
+  </div>
+
   <!-- Signals + Positions -->
   <div class="grid-2">
     <div class="card" style="margin-bottom:0">
-      <div class="card-title">Signal Status</div>
+      <div class="card-title">Signal Status <span style="color:var(--muted);font-weight:400;font-size:.65rem;text-transform:none;letter-spacing:0">— hover a badge for strategy details</span></div>
       <div class="signal-grid" id="signal-list"><div class="empty-msg">Loading…</div></div>
     </div>
     <div class="card" style="margin-bottom:0">
@@ -385,10 +468,45 @@ async function refreshAll() {
   document.getElementById('last-update').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 
+// ── Strategy tooltip ───────────────────────────────────────────
+const tooltip = document.getElementById('strat-tooltip');
+let tooltipTimeout = null;
+
+function showTooltip(e) {
+  clearTimeout(tooltipTimeout);
+  const pad = 14;
+  const tw = 300, th = 260;
+  let x = e.clientX + pad;
+  let y = e.clientY + pad;
+  if (x + tw > window.innerWidth)  x = e.clientX - tw - pad;
+  if (y + th > window.innerHeight) y = e.clientY - th - pad;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top  = y + 'px';
+  tooltip.style.display = 'block';
+}
+
+function hideTooltip() {
+  tooltipTimeout = setTimeout(() => { tooltip.style.display = 'none'; }, 120);
+}
+
+// Attach to signal-list via delegation — rebind after each render
+function bindTooltips() {
+  document.getElementById('signal-list').addEventListener('mouseover', e => {
+    if (e.target.classList.contains('badge')) showTooltip(e);
+  });
+  document.getElementById('signal-list').addEventListener('mousemove', e => {
+    if (e.target.classList.contains('badge')) showTooltip(e);
+  });
+  document.getElementById('signal-list').addEventListener('mouseout', e => {
+    if (e.target.classList.contains('badge')) hideTooltip();
+  });
+}
+
 // ── Init ───────────────────────────────────────────────────────
 refreshAll();
 loadChart();
 connectSSE();
+bindTooltips();
 setInterval(refreshAll, 30_000);
 </script>
 </body>
